@@ -1,0 +1,27 @@
+# Local Postgres for development. Cross-platform (Windows/macOS/Linux) — preferred over the
+# generated start-database.sh, which assumes a bash/WSL environment.
+#   Start:  docker compose up -d
+#   Stop:   docker compose down            (data persists in the named volume)
+#   Reset:  docker compose down -v         (drops all data)
+services:
+  db:
+    image: postgres:16
+    container_name: easyslr-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: easyslr
+    ports:
+      # Host 5433 → container 5432. 5433 avoids clashing with a host-installed Postgres on 5432.
+      - "5433:5432"
+    volumes:
+      - easyslr-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d easyslr"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  easyslr-pgdata:

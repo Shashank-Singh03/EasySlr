@@ -1,0 +1,195 @@
+// EasySLR — Article Review Workspace
+// Schema rationale lives in /docs/adr/database. Key decisions encoded here:
+//  - Article (immutable import data) and Review (mutable workflow state) are SEPARATE tables.
+//  - PMID is the only HARD dedup key. DOI/title collisions are SOFT flags, never constraints.
+//  - Postgres treats NULLs as distinct in unique indexes, so @@unique([projectId, pmid])
+//    blocks duplicate *non-null* PMIDs per project while allowing many null-PMID rows
+//    (e.g. an article identified only by DOI). This gives "partial unique" behaviour for free.
+
+generator client {
+    provider = "prisma-client-js"
+    output   = "../generated/prisma"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity & tenancy
+// ─────────────────────────────────────────────────────────────────────────────
+
+model User {
+    id       String  @id @default(cuid())
+    email    String  @unique
+    name     String?
+    password String // bcrypt hash; Credentials provider (see /docs/adr/backend/0006-auth-credentials-jwt)
+    active   Boolean @default(true) // deactivate instead of delete so review history survives
+
+    orgMemberships     OrganizationMembership[]
+    projectMemberships ProjectMembership[]
+    reviews            Review[]
+    importBatches      ImportBatch[]
+
+    @@index([email])
+}
+
+model Organization {
+    id        String   @id @default(cuid())
+    name      String
+    slug      String   @unique
+    createdAt DateTime @default(now())
+
+    members  OrganizationMembership[]
+    projects Project[]
+}
+
+// Org membership is the OUTER tenancy boundary. We intentionally do NOT model an org-level
+// role yet — project roles carry all real authorization weight. See ADR backend/0003.
+model OrganizationMembership {
+    id     String @id @default(cuid())
+    userId String
+    orgId  String
+
+    user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+    org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, orgId])
+    @@index([orgId])
+}
+
+model Project {
+    id        String   @id @default(cuid())
+    orgId     String
+    name      String
+    createdAt DateTime @default(now())
+
+    org      Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+    members  ProjectMembership[]
+    articles Article[]
+    batches  ImportBatch[]
+
+    @@index([orgId])
+}
+
+// Project access IS the authorization scope for articles. Enforced server-side in tRPC
+// middleware (see ADR backend/0003), never via hidden UI.
+enum ProjectRole {
+    OWNER // manage members, import, undo, delete
+    REVIEWER // read + write review decisions
+    VIEWER // read-only
+}
+
+model ProjectMembership {
+    id        String      @id @default(cuid())
+    userId    String
+    projectId String
+    role      ProjectRole @default(REVIEWER)
+
+    user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+    project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+    @@unique([userId, projectId])
+    @@index([projectId])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Import provenance
+// ─────────────────────────────────────────────────────────────────────────────
+
+// A thin audit/provenance record written at commit time. Powers the import summary,
+// "undo import", and a fileHash-based "already imported" warning. We deliberately do NOT
+// store a DRAFT/parsed-payload here: preview re-runs the same pure pipeline with no writes
+// (see ADR backend/0002).
+model ImportBatch {
+    id             String   @id @default(cuid())
+    projectId      String
+    uploadedById   String
+    filename       String
+    fileHash       String // sha256 of the uploaded bytes
+    totalRows      Int
+    importedCount  Int
+    duplicateCount Int
+    rejectedCount  Int
+    flaggedCount   Int
+    errors         Json // rejected/flagged rows: [{ rowNumber, code, field?, message }]
+    createdAt      DateTime @default(now())
+
+    project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    uploadedBy User      @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+    articles   Article[]
+
+    @@index([projectId])
+    @@index([projectId, fileHash])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Articles (immutable imported bibliographic data)
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Article {
+    id            String  @id @default(cuid())
+    projectId     String
+    importBatchId String?
+
+    // Bibliographic fields (PubMed-style export columns)
+    pmid        String?
+    doi         String? // normalized: lowercased, "DOI:" prefix stripped
+    title       String
+    authors     String? // raw "Rao A; Chen L" blob — see BUGS (author search is limited)
+    firstAuthor String?
+    journal     String?
+    citation    String?
+    year        Int? // null when unparseable/out-of-range; original preserved in rawYear
+    rawYear     String?
+    pmcid       String?
+    nihmsId     String?
+    createDate  String?
+
+    // Data-quality flags surfaced as badges in the table (typed booleans, not a JSON blob)
+    suspectYear    Boolean @default(false)
+    possibleDupDoi Boolean @default(false)
+
+    createdAt DateTime @default(now())
+
+    project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+    batch   ImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+    review  Review?
+
+    // The ONE hard dedup key. NULL-distinctness gives partial-unique behaviour (see header note).
+    @@unique([projectId, pmid])
+    @@index([projectId, createdAt])
+    @@index([projectId, year])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reviews (mutable workflow state)
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Decision {
+    UNREVIEWED
+    INCLUDE
+    EXCLUDE
+    MAYBE
+}
+
+model Review {
+    id              String   @id @default(cuid())
+    articleId       String
+    reviewerId      String
+    decision        Decision @default(UNREVIEWED)
+    exclusionReason String? // PRISMA expects a reason when excluding at full-text
+    priority        Int? // 1..5
+    notes           String?
+    labels          String[]
+    updatedAt       DateTime @updatedAt // doubles as the optimistic-concurrency token
+
+    article  Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+    // Restrict, not Cascade: a departing reviewer's decisions must not vanish.
+    reviewer User    @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+
+    // One decision per article today. Dual independent screening = change to @@unique([articleId, reviewerId]).
+    @@unique([articleId])
+    @@index([articleId])
+}
