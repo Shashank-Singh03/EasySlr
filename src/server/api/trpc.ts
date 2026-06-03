@@ -9,10 +9,15 @@
 
 import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 
 import { auth } from "~/server/auth";
 import { db } from "~/server/db";
+import {
+  requireArticleAccess,
+  requireOrgMembership,
+  requireProjectMembership,
+} from "~/server/services/access";
 
 /**
  * 1. CONTEXT
@@ -131,3 +136,45 @@ export const protectedProcedure = t.procedure
       },
     });
   });
+
+/**
+ * The authorization ladder (see /docs/adr/backend/0003). Each procedure reads the relevant id from
+ * the input, re-derives the caller's access from the database, and attaches the verified entity to
+ * the context. A resolver that wants project scope simply uses `projectProcedure` — it cannot run
+ * without a confirmed membership.
+ */
+
+/** Requires `input.orgId` and org membership. Attaches `ctx.org`. */
+export const orgProcedure = protectedProcedure.use(async ({ ctx, getRawInput, next }) => {
+  const { orgId } = z.object({ orgId: z.string() }).parse(await getRawInput());
+  const org = await requireOrgMembership(ctx.db, ctx.session.user.id, orgId);
+  return next({ ctx: { org } });
+});
+
+/** Requires `input.projectId` and project membership. Attaches `ctx.project` and `ctx.projectRole`. */
+export const projectProcedure = protectedProcedure.use(
+  async ({ ctx, getRawInput, next }) => {
+    const { projectId } = z.object({ projectId: z.string() }).parse(await getRawInput());
+    const { project, role } = await requireProjectMembership(
+      ctx.db,
+      ctx.session.user.id,
+      projectId,
+    );
+    return next({ ctx: { project, projectRole: role } });
+  },
+);
+
+/** Requires `input.articleId` and access to the article's project. Attaches article/project/role. */
+export const articleProcedure = protectedProcedure.use(
+  async ({ ctx, getRawInput, next }) => {
+    const { articleId } = z.object({ articleId: z.string() }).parse(await getRawInput());
+    const access = await requireArticleAccess(ctx.db, ctx.session.user.id, articleId);
+    return next({
+      ctx: {
+        article: access.article,
+        project: access.project,
+        projectRole: access.role,
+      },
+    });
+  },
+);

@@ -7,6 +7,7 @@ export { ImportFileError } from "./mapHeaders";
 export type { ImportFileErrorCode } from "./mapHeaders";
 export type {
   ArticleInput,
+  ExistingKeys,
   ImportPreview,
   ImportSummary,
   RowOutcome,
