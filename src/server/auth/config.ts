@@ -53,7 +53,8 @@ export const authConfig = {
         const { email, password } = parsed.data;
 
         const user = await db.user.findUnique({ where: { email } });
-        if (!user || !user.active) return null;
+        if (!user) return null;
+        if (!user.active) return null; // deactivated users cannot sign in
 
         const passwordMatches = await compare(password, user.password);
         if (!passwordMatches) return null;

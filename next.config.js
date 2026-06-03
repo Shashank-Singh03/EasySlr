@@ -3,8 +3,16 @@
  * for Docker builds.
  */
 import "./src/env.js";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
 /** @type {import("next").NextConfig} */
-const config = {};
+const config = {
+  // Pin the file-tracing root to this project. Without it, Next walks up and can pick a stray
+  // lockfile in the home directory as the workspace root, breaking standalone output on deploy.
+  outputFileTracingRoot: projectRoot,
+};
 
 export default config;
