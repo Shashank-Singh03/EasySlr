@@ -24,6 +24,19 @@ pnpm dev                             # http://localhost:3000
 
 > The local DB uses host port **5433** to avoid clashing with any Postgres already on 5432.
 
+### …or run the whole thing in Docker
+
+The app is containerized too (`Dockerfile`), so you can bring up app **and** database together:
+
+```bash
+docker compose up -d --build      # app on http://localhost:3000, Postgres alongside it
+```
+
+The container runs `prisma migrate deploy` + seed on startup and connects to the DB over the compose
+network (`db:5432`). `AUTH_SECRET` is a throwaway local value in `docker-compose.yml` — inject a real
+one from a secrets manager in production. (For a smaller image, switch to Next's `output: "standalone"`
+multi-stage build; the single-stage image here favors reliability and clarity.)
+
 ### Demo accounts (all password `password123`)
 
 | Email | Role | Can |

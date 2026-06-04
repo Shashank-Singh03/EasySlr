@@ -1,0 +1,10 @@
+# Never copy host build artifacts into the image — they're platform-specific or secret.
+# (.dockerignore does not support inline comments, so keep notes on their own lines.)
+# `generated` holds a Windows Prisma engine on the host; it's regenerated for Linux in the image.
+node_modules
+generated
+.next
+.git
+.env
+.env*.local
+*.log

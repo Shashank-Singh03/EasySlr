@@ -23,5 +23,24 @@ services:
       timeout: 5s
       retries: 10
 
+  # The Next.js app. Build:  docker compose up -d --build
+  app:
+    build: .
+    container_name: easyslr-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Inside the compose network the DB is reached at host "db" on its INTERNAL port 5432
+      # (the 5433 mapping above is only for connecting from the host machine).
+      DATABASE_URL: "postgresql://postgres:password@db:5432/easyslr"
+      # Local-only throwaway secret. In a real deployment inject this from a secrets manager.
+      AUTH_SECRET: "local-demo-secret-not-for-production-use-0001"
+      AUTH_TRUST_HOST: "true"
+      NODE_ENV: "production"
+    ports:
+      - "3000:3000"
+
 volumes:
   easyslr-pgdata:
