@@ -18,10 +18,10 @@ export const projectRouter = createTRPCRouter({
       }),
     ),
 
-  /** A single project the caller is a member of. */
+  /** A single project the caller is a member of, plus their role (UI gates write actions on it). */
   get: projectProcedure
     .input(z.object({ projectId: z.string() }))
-    .query(({ ctx }) => ctx.project),
+    .query(({ ctx }) => ({ ...ctx.project, role: ctx.projectRole })),
 
   /** Create a project in an org and make the creator its OWNER. */
   create: orgProcedure
