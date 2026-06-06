@@ -34,4 +34,5 @@ the file (ADR-0002).
 
 ## Time spent
 
-(To be filled in at submission — running total tracked during the build.)
+~10 focused hours (design + adversarial design review, implementation, tests, docs). Adjust to your
+actual figure before submitting.
